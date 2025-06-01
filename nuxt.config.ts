@@ -32,7 +32,9 @@ export default defineNuxtConfig({
       ]
     }
   },
-
+ serverMiddleware: [
+    { path: '/api', handler: '~/server/middleware/auth.ts' }
+  ],
   // Global CSS/SCSS files 
   css: [
     '~/assets/css/main.css' // <--- CHANGED THIS LINE

@@ -1,10 +1,9 @@
+// server/api/user/me.get.ts
 import { defineEventHandler, setResponseStatus } from 'h3';
 import { getAuthUserById } from '~/server/services/auth';
 
 export default defineEventHandler(async (event) => {
-  // This route is protected by `server/middleware/auth.ts`
   if (!event.context.user?.userId) {
-    // This case should ideally not be reached if middleware is correctly applied
     setResponseStatus(event, 401);
     return { message: 'Unauthorized: User not found in context' };
   }

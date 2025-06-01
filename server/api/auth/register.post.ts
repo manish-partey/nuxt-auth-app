@@ -1,31 +1,63 @@
-import { defineEventHandler, readBody, setResponseStatus } from 'h3';
-import { registerUser, generateAuthToken } from '~/server/services/auth';
+import { defineEventHandler, readBody, createError } from 'h3'
+import { hashPassword } from '~/server/utils/auth'
+import User from '~/server/models/User'
 
 export default defineEventHandler(async (event) => {
-    try {
-        const body = await readBody(event);
-        const { username, email, password } = body;
+  try {
+    const body = await readBody(event)
+    const { username, email, password } = body
 
-        const newUser = await registerUser(username, email, password);
-        const token = generateAuthToken(newUser._id.toString());
-
-        setResponseStatus(event, 201); // 201 Created
-        return {
-            message: 'User registered successfully! Please check your email for verification.',
-            user: { id: newUser._id, username: newUser.username, email: newUser.email, isVerified: newUser.isVerified },
-            token // Optionally return token upon registration for immediate login
-        };
-    } catch (error: any) {
-        console.error('Registration API Error:', error);
-        if (error.name === 'ValidationError') {
-            setResponseStatus(event, 400);
-            return { message: 'Validation failed.', errors: error.errors };
-        }
-        if (error.message.includes('exists')) { // Custom error message for existing user
-            setResponseStatus(event, 409); // Conflict
-            return { message: error.message };
-        }
-        setResponseStatus(event, 500);
-        return { message: 'An unexpected error occurred during registration.', error: error.message };
+    if (!username || !email || !password) {
+      throw createError({
+        statusCode: 400,
+        message: 'Missing username, email, or password'
+      })
     }
-});
+
+    // Check if user already exists by email or username
+    const existingUser = await User.findOne({ $or: [{ email }, { username }] })
+
+    console.log('🔍 Checking existing user for:', email, username)
+    console.log('🔁 existingUser found:', existingUser)
+
+    if (existingUser) {
+      throw createError({
+        statusCode: 409,
+        message: 'Email or username already exists.'
+      })
+    }
+
+    // Hash password
+    const hashedPassword = await hashPassword(password)
+
+    // Create new user
+    const newUser = new User({
+      username,
+      email,
+      password: hashedPassword,
+      role: 'user',
+      emailVerified: false,
+    })
+
+    await newUser.save()
+
+    return {
+      status: 'success',
+      message: 'User registered successfully.',
+      user: {
+        id: newUser._id,
+        email: newUser.email,
+        username: newUser.username,
+        role: newUser.role,
+        emailVerified: newUser.emailVerified,
+      }
+    }
+  } catch (err: any) {
+    console.error('❌ Registration error:', err)
+    // Return error in Nuxt format
+    return createError({
+      statusCode: err.statusCode || 500,
+      statusMessage: err.message || 'Internal Server Error',
+    })
+  }
+})

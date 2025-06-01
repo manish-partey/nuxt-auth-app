@@ -1,11 +1,8 @@
 import User, { IUser } from '~/server/models/User';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { useRuntimeConfig } from '#imports';
-import { sendEmail } from '~/server/utils/email'; // Import email utility
-import crypto from 'crypto'; // Node.js built-in module
-
-const config = useRuntimeConfig();
+import { sendEmail } from '~/server/utils/email';
+import crypto from 'crypto';
 
 export async function registerUser(username: string, email: string, password: string): Promise<IUser> {
   const existingUser = await User.findOne({ $or: [{ email }, { username }] });
@@ -14,10 +11,8 @@ export async function registerUser(username: string, email: string, password: st
   }
 
   const hashedPassword = await bcrypt.hash(password, 10);
-
-  // Generate email verification token
   const emailVerificationToken = crypto.randomBytes(32).toString('hex');
-  const emailVerificationExpires = new Date(Date.now() + 3600000); // 1 hour from now
+  const emailVerificationExpires = new Date(Date.now() + 3600000); // 1 hour
 
   const newUser = new User({
     username,
@@ -27,9 +22,18 @@ export async function registerUser(username: string, email: string, password: st
     emailVerificationExpires,
   });
 
-  await newUser.save();
+  try {
+    await newUser.save();
+  } catch (err: any) {
+    if (err.code === 11000) {
+      throw new Error('Email or username already exists.');
+    }
+    throw err;
+  }
 
-  // Send verification email
+  // Get runtime config AFTER handler context is available
+  const config = useRuntimeConfig();
+
   const verificationLink = `${config.public.appUrl}/verify-email?token=${emailVerificationToken}`;
   const emailHtml = `
     <h1>Welcome to Nuxt Auth App!</h1>
@@ -37,6 +41,7 @@ export async function registerUser(username: string, email: string, password: st
     <a href="${verificationLink}">Verify Email</a>
     <p>This link will expire in 1 hour.</p>
   `;
+
   await sendEmail(newUser.email, 'Verify Your Email for Nuxt Auth App', emailHtml);
 
   return newUser;
@@ -49,13 +54,7 @@ export async function loginUser(emailOrUsername: string, password: string): Prom
     throw new Error('Invalid credentials');
   }
 
-  // Check if user is verified (optional, you can force verification before login)
-  // if (!user.isVerified) {
-  //   throw new Error('Please verify your email address.');
-  // }
-
   const isMatch = await bcrypt.compare(password, user.password);
-
   if (!isMatch) {
     throw new Error('Invalid credentials');
   }
@@ -64,22 +63,21 @@ export async function loginUser(emailOrUsername: string, password: string): Prom
 }
 
 export function generateAuthToken(userId: string): string {
+  const config = useRuntimeConfig();
   if (!config.jwtSecret) {
     throw new Error('JWT_SECRET is not defined in runtimeConfig.');
   }
-  return jwt.sign({ userId }, config.jwtSecret, { expiresIn: '1d' }); // Token valid for 1 day
+  return jwt.sign({ userId }, config.jwtSecret, { expiresIn: '1d' });
 }
 
 export async function getAuthUserById(userId: string): Promise<IUser | null> {
-  // Fetch user by ID, excluding sensitive fields like password
-  const user = await User.findById(userId).select('-password -emailVerificationToken -emailVerificationExpires -resetPasswordToken -resetPasswordExpires');
-  return user;
+  return await User.findById(userId).select('-password -emailVerificationToken -emailVerificationExpires -resetPasswordToken -resetPasswordExpires');
 }
 
 export async function verifyUserEmail(token: string): Promise<IUser> {
   const user = await User.findOne({
     emailVerificationToken: token,
-    emailVerificationExpires: { $gt: new Date() } // Token is not expired
+    emailVerificationExpires: { $gt: new Date() }
   });
 
   if (!user) {
@@ -89,18 +87,16 @@ export async function verifyUserEmail(token: string): Promise<IUser> {
   user.isVerified = true;
   user.emailVerificationToken = undefined;
   user.emailVerificationExpires = undefined;
-
   await user.save();
+
   return user;
 }
 
 export async function requestPasswordReset(email: string): Promise<void> {
   const user = await User.findOne({ email });
+  if (!user) return;
 
-  if (!user) {
-    // For security, don't reveal if email exists or not
-    throw new Error('If an account with that email exists, a password reset link has been sent.');
-  }
+  const config = useRuntimeConfig();
 
   const resetToken = crypto.randomBytes(32).toString('hex');
   const resetExpires = new Date(Date.now() + 3600000); // 1 hour
@@ -112,12 +108,11 @@ export async function requestPasswordReset(email: string): Promise<void> {
   const resetLink = `${config.public.appUrl}/reset-password?token=${resetToken}`;
   const emailHtml = `
     <h1>Password Reset Request</h1>
-    <p>You are receiving this because you (or someone else) have requested the reset of the password for your account.</p>
-    <p>Please click on the following link, or paste this into your browser to complete the process:</p>
+    <p>Please click on the following link to reset your password:</p>
     <a href="${resetLink}">Reset Password</a>
     <p>This link will expire in 1 hour.</p>
-    <p>If you did not request this, please ignore this email and your password will remain unchanged.</p>
   `;
+
   await sendEmail(user.email, 'Password Reset Request for Nuxt Auth App', emailHtml);
 }
 
@@ -125,7 +120,7 @@ export async function resetUserPassword(token: string, newPassword: string): Pro
   const user = await User.findOne({
     resetPasswordToken: token,
     resetPasswordExpires: { $gt: new Date() }
-  }).select('+password'); // Select password to update it
+  }).select('+password');
 
   if (!user) {
     throw new Error('Password reset token is invalid or has expired.');
@@ -140,11 +135,9 @@ export async function resetUserPassword(token: string, newPassword: string): Pro
 }
 
 export async function updateUserRole(userId: string, newRole: 'user' | 'admin'): Promise<IUser | null> {
-  const user = await User.findByIdAndUpdate(userId, { role: newRole }, { new: true });
-  return user;
+  return await User.findByIdAndUpdate(userId, { role: newRole }, { new: true });
 }
 
 export async function getAllUsers(): Promise<IUser[]> {
-  const users = await User.find().select('-password -emailVerificationToken -emailVerificationExpires -resetPasswordToken -resetPasswordExpires');
-  return users;
+  return await User.find().select('-password -emailVerificationToken -emailVerificationExpires -resetPasswordToken -resetPasswordExpires');
 }
